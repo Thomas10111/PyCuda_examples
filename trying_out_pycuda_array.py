@@ -9,7 +9,7 @@ import numpy
 
 def func_numpy(a):
     temp = numpy.round(a, decimals=1)
-    temp = numpy.clip(temp, 0, 80)
+    temp = numpy.clip(temp, 0, 80)  # x < 0  becomes 0, x > 80 becomes 80
     return temp.astype(int)
 
 def copy_and_run(a_gpu, a):
