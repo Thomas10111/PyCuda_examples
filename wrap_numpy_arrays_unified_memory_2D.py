@@ -1,9 +1,5 @@
-# Sample source code from the Tutorial Introduction in the documentation.
 
-import pycuda.driver as cuda
-import pycuda.autoinit
-from pycuda.compiler import SourceModule
-from timeit import default_timer
+import timeit
 import random
 import numpy
 import hashlib
@@ -13,25 +9,22 @@ import pathlib
 import pycuda.driver as cuda
 import pycuda.autoinit
 import pycuda.compiler as compiler
-
-
+from pycuda.compiler import SourceModule
 
 NumberOfIndividuals = 10
-MAX_INDIVIDUALS = (1 << 5)
+MAX_INDIVIDUALS = (1 << 4)
 BLOCK_SIZE = 1024
 
-
 mod = """
-/*
-** copyright banner
-*/
-
 // Test compile with "nvcc --cubin -arch sm_61 -m64 -Ie:\\src\\ifdm\\multiscale\\venv\\lib\\site-packages\\pycuda\\cuda kernel.cu"
 
 #include <cstdint>
-//#include <curand_kernel.h>
 
 extern "C" {
+    #define NSTATES (1<<14)
+    
+    __device__ float log_device[NSTATES][10];
+    
     __global__ void update_individuals(
         unsigned int count,
         float dt,
@@ -39,7 +32,7 @@ extern "C" {
         unsigned int* alive,
         float* death_age)
     {
-        int idx = threadIdx.x + blockIdx.x*blockDim.x;
+        int idx = threadIdx.x + blockIdx.x * blockDim.x;
         
         if(idx > count) return;
         
@@ -48,12 +41,26 @@ extern "C" {
         if( age[idx] > death_age[idx] )
         {
             alive[idx] = 0;
+            log_device[idx][0] = death_age[idx];
+            log_device[idx][9] = 123;
+        }
+    }
+    
+    __global__ void get_log(float* log)
+    {
+        int idx = threadIdx.x + blockIdx.x * blockDim.x;
+        
+        for(int i = 0; i < 10; i++)
+        {
+            log[(idx*10) + i] = log_device[idx][i];
         }
     }
 }"""
 
+
 def load_cuda_code_individual():
     global _update_individuals_fn
+    global _get_log_fn
 
     md5 = hashlib.md5()
     md5.update(mod.encode("utf-8"))
@@ -70,15 +77,20 @@ def load_cuda_code_individual():
     _cuda_module = cuda.module_from_file(str(path))
 
     _update_individuals_fn = _cuda_module.get_function("update_individuals")
+    _get_log_fn = _cuda_module.get_function("get_log")
 
 
 load_cuda_code_individual()
 
+
 class Individual_Cuda_Arrays:
     def __init__(self):
-        self._alive = numpy.zeros(MAX_INDIVIDUALS, dtype=numpy.uint32)
-        self._age = numpy.zeros(MAX_INDIVIDUALS, dtype=numpy.float32)
-        self._death_age = numpy.zeros(MAX_INDIVIDUALS, dtype=numpy.float32)
+        # Unified memory
+        self._alive = pycuda.driver.managed_zeros(shape=MAX_INDIVIDUALS, dtype=numpy.uint32, mem_flags=cuda.mem_attach_flags.GLOBAL)
+        self._age = pycuda.driver.managed_zeros(shape=MAX_INDIVIDUALS, dtype=numpy.float32, mem_flags=cuda.mem_attach_flags.GLOBAL)
+        self._death_age = pycuda.driver.managed_zeros(shape=MAX_INDIVIDUALS, dtype=numpy.float32, mem_flags=cuda.mem_attach_flags.GLOBAL)
+        self._log = pycuda.driver.managed_zeros(shape=(MAX_INDIVIDUALS, 10), dtype=numpy.float32, mem_flags=cuda.mem_attach_flags.GLOBAL)
+
 
 class Individual:
     _next_id = 0
@@ -124,30 +136,41 @@ class Individual:
     def update_all_individuals(cls, dt):
         grid_x = (cls._next_id + BLOCK_SIZE - 1) // BLOCK_SIZE
 
-        _update_individuals_fn( numpy.uint32(cls._next_id),             # unsigned int count
-                                numpy.float32(dt),                      # float dt
-                                cuda.InOut(cls.Cuda_Arrays._age),       # float* age
-                                cuda.InOut(cls.Cuda_Arrays._alive),     # unsigned int* alive
-                                cuda.In(cls.Cuda_Arrays._death_age),    # float* death_age
-                                block=(BLOCK_SIZE, 1, 1),
-                                grid=(grid_x, 1),
-                                time_kernel=True
-                                )
+        _update_individuals_fn(numpy.uint32(cls._next_id),  # unsigned int count
+                               numpy.float32(dt),  # float dt
+                               cls.Cuda_Arrays._age,  # float* age
+                               cls.Cuda_Arrays._alive,  # unsigned int* alive
+                               cls.Cuda_Arrays._death_age,  # float* death_age
+                               block=(BLOCK_SIZE, 1, 1),
+                               grid=(grid_x, 1),
+                               time_kernel=True
+                               )
 
+    @classmethod
+    def get_log(cls):
+        grid_x = (cls._next_id + BLOCK_SIZE - 1) // BLOCK_SIZE
+
+        _get_log_fn(           cls.Cuda_Arrays._log,  # float* death_age
+                               block=(BLOCK_SIZE, 1, 1),
+                               grid=(grid_x, 1),
+                               time_kernel=True
+                               )
 
 if __name__ == '__main__':
     NumberOfRuns = 1
-    duration = 60 * 365
+    duration = 365 * 60
     individuals = [Individual() for i in range(0, NumberOfIndividuals)]
 
     pycuda.driver.init()
-    dt = 1/365
-    start = default_timer()
-    # -------- time -------------
-    for _ in range(NumberOfRuns):
-        for _ in range(duration):
-            Individual.update_all_individuals(dt)
-    # --------------------------
 
-    print("duration: ", default_timer() - start)
-    [print("alive: ", i.is_alive) for i in individuals]
+    # for _ in range(duration):
+    #     Individual.update_all_individuals(1.0)
+    dt = 1/365
+    result_time = timeit.timeit("[Individual.update_all_individuals(dt) for _ in range(duration)]", globals=globals(), number=NumberOfRuns)
+    print("duration: ", result_time)
+
+    for i in individuals:
+        print("alive: ", i.is_alive)
+
+    Individual.get_log()
+    print(Individual.Cuda_Arrays._log)

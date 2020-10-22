@@ -3,7 +3,7 @@
 import pycuda.driver as cuda
 import pycuda.autoinit
 from pycuda.compiler import SourceModule
-import timeit
+from timeit import default_timer
 import random
 import numpy
 import hashlib
@@ -189,16 +189,24 @@ class Individual:
 
 
 if __name__ == '__main__':
-    duration = 60
+    NumberOfRuns = 1
+    duration = 60 * 365
     individuals = [Individual() for i in range(0, NumberOfIndividuals)]
 
     pycuda.driver.init()
-    Individual.init_gpu()
 
-    for _ in range(duration):
-        Individual.update_all_individuals(1)
+    dt = 1/365
+    start = default_timer()
+    # -------- time -------------
+    Individual.init_gpu()
+    for _ in range(NumberOfRuns):
+        for _ in range(duration):
+            Individual.update_all_individuals(dt)
 
     Individual.to_host()
+    # --------------------------
+    print("duration: ", default_timer() - start)
 
     for i in individuals:
         print("alive: ", i.is_alive)
+
