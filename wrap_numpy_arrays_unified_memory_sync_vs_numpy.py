@@ -1,5 +1,11 @@
 # What is faster, using numpy to filter/query/process an array what requires copying the whole array to the cpu
 # or syncing threads and collecting all the information on the gpu
+#
+# The run time on the gpu more or less stays constant with an increasing number of individuals.
+# The time needed on the cpu (numpy) increases steadily with more individuals, 11s vs 74s with 65535 individuals
+#
+# My assumption was that __syncthreads() might take more time than a numpy function.
+
 import timeit
 import random
 import numpy
@@ -13,7 +19,7 @@ import pycuda.compiler as compiler
 from pycuda.compiler import SourceModule
 
 NumberOfIndividuals = 10
-MAX_INDIVIDUALS = (1 << 14)
+MAX_INDIVIDUALS = (1 << 16) # 15: 32768, 16: 65536
 BLOCK_SIZE = 1024
 
 mod = """
@@ -151,7 +157,6 @@ if __name__ == '__main__':
     pycuda.driver.init()
 
     dt = 1/365
-    # result_time = timeit.timeit("[Individual.update_all_individuals(dt) for _ in range(duration)]", globals=globals(), number=NumberOfRuns)
 
     start_time = timeit.default_timer()
     for _ in range(duration):
@@ -164,13 +169,16 @@ if __name__ == '__main__':
         print("alive: ", i.is_alive)
 
 
-
+    Individual._alive[:] = 0
+    Individual._age[:] = 0
+    Individual._death_age[:] = 0
+    Individual._dead_id[:] = -1
     individuals = [Individual() for i in range(0, NumberOfIndividuals)]
 
     start_time = timeit.default_timer()
     for _ in range(duration):
         Individual.update_all_individuals(dt)
-        a = numpy.where(Individual._alive==1)
+        a = numpy.where(Individual._alive==1)   # get id of individuals
         # print(a)
     print(timeit.default_timer() - start_time)
 
