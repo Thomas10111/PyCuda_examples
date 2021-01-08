@@ -1,3 +1,5 @@
+import faulthandler
+faulthandler.enable()   # Shows page faults, generates exception when using dill/pickle (disable in this case)
 
 import timeit
 import random
