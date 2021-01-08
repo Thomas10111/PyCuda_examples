@@ -20,10 +20,16 @@ from pycuda.compiler import SourceModule
 
 NumberOfIndividuals = 10
 NumberOfHouseholds = 2
+NumberOfBaris = 3
 NumberOfIndividualsPerHH = 3
+NumberOfHHPerBari = 3
+
 MAX_INDIVIDUALS = (1 << 16) # 15: 32768, 16: 65536
-MAX_HOUSEHOLDS = (1 << 4)
+MAX_HOUSEHOLDS = (1 << 5)
+MAX_BARIS = (1 << 5)
+
 MAX_INIVIDUALS_PER_HH = 10
+MAX_HH_PER_BARI = 10
 BLOCK_SIZE = 1024
 
 mod = """
@@ -36,7 +42,27 @@ extern "C" {
     __device__ unsigned int index;
     __device__ unsigned int MAX_HOUSEHOLDS = (1 << 4);
     __device__ unsigned int MAX_INIVIDUALS_PER_HH = 10;
+    __device__ unsigned int MAX_HH_PER_BARI = 10;
     __device__ float log_device[NSTATES][10];
+
+     __global__ void update_baris(
+        unsigned int count,
+        unsigned int* households)
+    {
+        
+        int bari_id = threadIdx.x + blockIdx.x * blockDim.x;
+        if( bari_id > count ) return;
+        
+        if(bari_id == 1)
+        {
+            // move hh3 from bari
+            unsigned int temp = households[bari_id * MAX_HH_PER_BARI + 2];
+            households[bari_id * MAX_HH_PER_BARI + 2] = households[(bari_id+1) * MAX_HH_PER_BARI + 2];
+            households[(bari_id+1) * MAX_HH_PER_BARI + 2] = temp;
+        }       
+    }
+
+
     
      __global__ void update_households(
         unsigned int count,
@@ -48,7 +74,7 @@ extern "C" {
        
         if(household_id == 0)
         {
-            // exchange individual number 2 
+            // exchange individual number 2 between hh0 and hh1
             unsigned int temp = individuals[household_id * MAX_INIVIDUALS_PER_HH + 2];
             individuals[household_id * MAX_INIVIDUALS_PER_HH + 2] = individuals[(household_id+1) * MAX_INIVIDUALS_PER_HH + 2];
             individuals[(household_id+1) * MAX_INIVIDUALS_PER_HH + 2] = temp;
@@ -90,6 +116,7 @@ extern "C" {
 def load_cuda_code_individual():
     global _update_individuals_fn
     global _update_households_fn
+    global _update_baris_fn
 
     md5 = hashlib.md5()
     md5.update(mod.encode("utf-8"))
@@ -107,39 +134,85 @@ def load_cuda_code_individual():
 
     _update_individuals_fn = _cuda_module.get_function("update_individuals")
     _update_households_fn = _cuda_module.get_function("update_households")
+    _update_baris_fn = _cuda_module.get_function("update_baris")
 
 
 load_cuda_code_individual()
 
-class Household:
+
+class SharedObj:
     _next_id = 0
-    _individuals = pycuda.driver.managed_zeros(shape=MAX_INDIVIDUALS, dtype=numpy.uint32, mem_flags=cuda.mem_attach_flags.GLOBAL)
-    # _hh_ids = pycuda.driver.managed_zeros(shape=MAX_INDIVIDUALS, dtype=numpy.uint32, mem_flags=cuda.mem_attach_flags.GLOBAL)
 
     def __init__(self):
-        self._id = Household.get_next_id()
-        self.next_available_idx = 0
+        self._id = None
 
     @property
     def id(self):
         return self._id
 
-    @staticmethod
-    def get_next_id():
-        _id = Household._next_id
-        Household._next_id += 1
+    @classmethod
+    def get_next_id(cls):
+        _id = cls._next_id
+        cls._next_id += 1
         return _id
+
+
+class Bari(SharedObj):
+    _households = pycuda.driver.managed_zeros(shape=MAX_HOUSEHOLDS, dtype=numpy.uint32, mem_flags=cuda.mem_attach_flags.GLOBAL)
+
+    # array containing all baris
+    all_baris = numpy.array([None for _ in range(MAX_BARIS)])
+
+    def __init__(self):
+        self._id = Bari.get_next_id()
+        self.next_available_idx = 0
+        Bari.all_baris[self._id] = self
+
+    @classmethod
+    def update_all_baris(cls):
+        grid_x = (cls._next_id + BLOCK_SIZE - 1) // BLOCK_SIZE
+
+        _update_baris_fn(numpy.uint32(cls._next_id),  # unsigned int count
+                         cls._households,
+                         block=(BLOCK_SIZE, 1, 1),
+                         grid=(grid_x, 1),
+                         time_kernel=True
+                         )
+
+    def add(self, household):
+        idx = self._id * MAX_HH_PER_BARI + self.next_available_idx
+        self.next_available_idx += 1
+        Bari._households[idx] = household.id
+
+    @property
+    def households(self):
+        start_idx = self._id * MAX_HH_PER_BARI
+        end_idx = self._id * MAX_HH_PER_BARI + self.next_available_idx
+        return Bari._households[start_idx:end_idx]
+
+
+class Household(SharedObj):
+    _individuals = pycuda.driver.managed_zeros(shape=MAX_INDIVIDUALS, dtype=numpy.uint32, mem_flags=cuda.mem_attach_flags.GLOBAL)
+    # _hh_ids = pycuda.driver.managed_zeros(shape=MAX_INDIVIDUALS, dtype=numpy.uint32, mem_flags=cuda.mem_attach_flags.GLOBAL)
+
+    # array containing all households
+    all_households = numpy.array([None for _ in range(MAX_HOUSEHOLDS)])
+
+    def __init__(self):
+        self._id = Household.get_next_id()
+        self.next_available_idx = 0
+        Household.all_households[self._id] = self
 
     @classmethod
     def update_all_households(cls):
         grid_x = (cls._next_id + BLOCK_SIZE - 1) // BLOCK_SIZE
 
         _update_households_fn(numpy.uint32(cls._next_id),  # unsigned int count
-                               cls._individuals,
-                               block=(BLOCK_SIZE, 1, 1),
-                               grid=(grid_x, 1),
-                               time_kernel=True
-                               )
+                              cls._individuals,
+                              block=(BLOCK_SIZE, 1, 1),
+                              grid=(grid_x, 1),
+                              time_kernel=True
+                              )
 
     def add(self, individual):
         idx = self._id * MAX_INIVIDUALS_PER_HH + self.next_available_idx
@@ -153,8 +226,8 @@ class Household:
         return Household._individuals[start_idx:end_idx]
 
 
-class Individual:
-    _next_id = 0
+class Individual(SharedObj):
+
     # Unified memory
     _alive = pycuda.driver.managed_zeros(shape=MAX_INDIVIDUALS, dtype=numpy.uint32, mem_flags=cuda.mem_attach_flags.GLOBAL)
     _age = pycuda.driver.managed_zeros(shape=MAX_INDIVIDUALS, dtype=numpy.float32, mem_flags=cuda.mem_attach_flags.GLOBAL)
@@ -172,16 +245,6 @@ class Individual:
         self.death_age = random.randint(60, 80)
         self.is_alive = True
         Individual.all_individuals[self._id] = self # add individual to list of all individuals
-
-    @staticmethod
-    def get_next_id():
-        _id = Individual._next_id
-        Individual._next_id += 1
-        return _id
-
-    @property
-    def id(self):
-        return self._id
 
     @property
     def is_alive(self):
@@ -225,17 +288,26 @@ class Individual:
 if __name__ == '__main__':
     NumberOfRuns = 1
     duration = 365 * 60
-    households = []
+    baris = []
 
-    for i in range(0, NumberOfHouseholds):
-        hh = Household()
-        [hh.add(Individual()) for i in range(0, NumberOfIndividualsPerHH)]
-        households.append(hh)
 
-    for hh in households:
-        print("---", hh.id, "---")
-        for ind in hh.individuals:
-            print(Individual.all_individuals[ind].id, ": ", Individual.all_individuals[ind].age)
+    for i in range(0, NumberOfBaris):
+        b = Bari()
+        for _ in range(0, NumberOfHHPerBari):
+            hh = Household()
+            [hh.add(Individual()) for i in range(0, NumberOfIndividualsPerHH)]
+            b.add(hh)
+
+        baris.append(b)
+
+
+    for b in baris:
+        print("--- Bari: ", b.id, "---")
+        for hh in b.households:
+            household = Household.all_households[hh]
+            print("--- Household: ", household.id, "---")
+            for ind in household.individuals:
+                print(Individual.all_individuals[ind].id, ": ", Individual.all_individuals[ind].age)
 
     pycuda.driver.init()
 
@@ -245,11 +317,15 @@ if __name__ == '__main__':
     #for _ in range(duration):
     Individual.update_all_individuals(dt)
     Household.update_all_households()
+    Bari.update_all_baris()
     print(timeit.default_timer() - start_time)
 
-    for hh in households:
-        print("---", hh.id, "---")
-        for ind in hh.individuals:
-            print(Individual.all_individuals[ind].id,": ", Individual.all_individuals[ind].age)
+    for b in baris:
+        print("--- Bari: ", b.id, "---")
+        for hh in b.households:
+            household = Household.all_households[hh]
+            print("--- Household: ", household.id, "---")
+            for ind in household.individuals:
+                print(Individual.all_individuals[ind].id,": ", Individual.all_individuals[ind].age)
 
 
