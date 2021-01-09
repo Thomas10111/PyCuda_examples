@@ -55,7 +55,7 @@ extern "C" {
         
         if(bari_id == 1)
         {
-            // move hh3 from bari
+            // exchange hh3 (id 5) from bari 1 with hh3 (id 8) from bari 2 
             unsigned int temp = households[bari_id * MAX_HH_PER_BARI + 2];
             households[bari_id * MAX_HH_PER_BARI + 2] = households[(bari_id+1) * MAX_HH_PER_BARI + 2];
             households[(bari_id+1) * MAX_HH_PER_BARI + 2] = temp;
