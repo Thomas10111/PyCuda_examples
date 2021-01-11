@@ -27,6 +27,8 @@ NumberOfHHPerBari = 3
 MAX_INDIVIDUALS = (1 << 16) # 15: 32768, 16: 65536
 MAX_HOUSEHOLDS = (1 << 5)
 MAX_BARIS = (1 << 5)
+MAX_VILLAGES = 2
+IDX_START_STOP = 10
 
 MAX_INIVIDUALS_PER_HH = 10
 MAX_HH_PER_BARI = 10
@@ -87,7 +89,10 @@ extern "C" {
         float* age,
         unsigned int* alive,
         float* death_age,
-        int* dead_id)
+        int* dead_id,
+        unsigned int* village_id,
+        unsigned int* bari_id,
+        unsigned int* household_id)
     {
         if ( threadIdx.x == 0 )
         {
@@ -103,11 +108,12 @@ extern "C" {
               
         age[idx] += dt;
         
-        if( age[idx] > death_age[idx] )
+        if( age[idx] > death_age[idx] && alive[idx] ) //individual dies only once
         {
             alive[idx] = 0;
             const int resultIndex = atomicAdd(&index, 1); // increase index by 1
-            dead_id[resultIndex] = idx;
+            //dead_id[village_id[idx]][bari_id[idx]][household_id[idx]][resultIndex] = idx;
+            dead_id[village_id[idx] * 2 + bari_id[idx] * 10 + household_id[idx] * 10 + resultIndex] = idx;
         }
     }
 }"""
@@ -180,6 +186,7 @@ class Bari(SharedObj):
                          )
 
     def add(self, household):
+        """ "list" of households """
         idx = self._id * MAX_HH_PER_BARI + self.next_available_idx
         self.next_available_idx += 1
         Bari._households[idx] = household.id
@@ -215,6 +222,7 @@ class Household(SharedObj):
                               )
 
     def add(self, individual):
+        """ "List" of individuals in this household. """
         idx = self._id * MAX_INIVIDUALS_PER_HH + self.next_available_idx
         self.next_available_idx += 1
         Household._individuals[idx] = individual.id
@@ -232,18 +240,25 @@ class Individual(SharedObj):
     _alive = pycuda.driver.managed_zeros(shape=MAX_INDIVIDUALS, dtype=numpy.uint32, mem_flags=cuda.mem_attach_flags.GLOBAL)
     _age = pycuda.driver.managed_zeros(shape=MAX_INDIVIDUALS, dtype=numpy.float32, mem_flags=cuda.mem_attach_flags.GLOBAL)
     _death_age = pycuda.driver.managed_zeros(shape=MAX_INDIVIDUALS, dtype=numpy.float32, mem_flags=cuda.mem_attach_flags.GLOBAL)
-    _dead_id = pycuda.driver.managed_zeros(shape=MAX_INDIVIDUALS, dtype=numpy.int32, mem_flags=cuda.mem_attach_flags.GLOBAL)
+    _village_id = pycuda.driver.managed_zeros(shape=MAX_INDIVIDUALS, dtype=numpy.uint32, mem_flags=cuda.mem_attach_flags.GLOBAL)
+    _bari_id = pycuda.driver.managed_zeros(shape=MAX_INDIVIDUALS, dtype=numpy.uint32, mem_flags=cuda.mem_attach_flags.GLOBAL)
+    _household_id = pycuda.driver.managed_zeros(shape=MAX_INDIVIDUALS, dtype=numpy.uint32, mem_flags=cuda.mem_attach_flags.GLOBAL)
+    _dead_id = pycuda.driver.managed_zeros(shape=(MAX_VILLAGES, MAX_HH_PER_BARI, MAX_INIVIDUALS_PER_HH, IDX_START_STOP), dtype=numpy.int32, mem_flags=cuda.mem_attach_flags.GLOBAL)
     _dead_id[:] = -1
+
 
     # array containing all individuals
     all_individuals = numpy.array([None for _ in range(MAX_INDIVIDUALS)])
 
-    def __init__(self):
+    def __init__(self, village_id, bari_id, household_id):
         self._id = Individual.get_next_id()
         #self.age = random.randint(10, 20)
         self.age = random.random() * 20.0
         self.death_age = random.randint(60, 80)
         self.is_alive = True
+        Individual._village_id[self._id] = village_id
+        Individual._bari_id[self._id] = bari_id
+        Individual._household_id[self._id] = household_id
         Individual.all_individuals[self._id] = self # add individual to list of all individuals
 
     @property
@@ -280,6 +295,9 @@ class Individual(SharedObj):
                                cls._alive,  # unsigned int* alive
                                cls._death_age,  # float* death_age
                                cls._dead_id,
+                               cls._village_id,
+                               cls._bari_id,
+                               cls._household_id,
                                block=(BLOCK_SIZE, 1, 1),
                                grid=(grid_x, 1),
                                time_kernel=True
@@ -291,11 +309,11 @@ if __name__ == '__main__':
     baris = []
 
 
-    for i in range(0, NumberOfBaris):
+    for idx_bari in range(0, NumberOfBaris):
         b = Bari()
-        for _ in range(0, NumberOfHHPerBari):
+        for idx_hh in range(0, NumberOfHHPerBari):
             hh = Household()
-            [hh.add(Individual()) for i in range(0, NumberOfIndividualsPerHH)]
+            [hh.add(Individual(0, idx_bari, idx_hh)) for i in range(0, NumberOfIndividualsPerHH)]
             b.add(hh)
 
         baris.append(b)
@@ -329,3 +347,12 @@ if __name__ == '__main__':
                 print(Individual.all_individuals[ind].id,": ", Individual.all_individuals[ind].age)
 
 
+    # Return 4d array with ids of dead individuals
+    for _ in range(duration):
+        Individual.update_all_individuals(dt)
+        for b in range(10):
+            for hh in range(10):
+                for ind in range(10):
+                    if Individual._dead_id[0][b][hh][ind] != -1:
+                        print(Individual._dead_id[0][b][hh][ind])
+                        Individual._dead_id[0][b][hh][ind] = -1  # remove id
