@@ -32,6 +32,7 @@ IDX_START_STOP = 10
 
 MAX_INIVIDUALS_PER_HH = 10
 MAX_HH_PER_BARI = 10
+MAX_BARIS_PER_VILLAGE = 10
 BLOCK_SIZE = 1024
 
 mod = """
@@ -40,11 +41,14 @@ mod = """
 #include <cstdint>
 
 extern "C" {
-    #define NSTATES (1<<14)
-    __device__ unsigned int index;
+    __device__ const unsigned int NSTATES (1<<14);
+    __device__ const unsigned int MAX_VILLAGES = 2;
     __device__ unsigned int MAX_HOUSEHOLDS = (1 << 4);
     __device__ unsigned int MAX_INIVIDUALS_PER_HH = 10;
     __device__ unsigned int MAX_HH_PER_BARI = 10;
+    __device__ unsigned int MAX_BARIS_PER_VILLAGE = 10;
+    
+    __device__ unsigned int index;
     __device__ float log_device[NSTATES][10];
 
      __global__ void update_baris(
@@ -113,7 +117,22 @@ extern "C" {
             alive[idx] = 0;
             const int resultIndex = atomicAdd(&index, 1); // increase index by 1
             //dead_id[village_id[idx]][bari_id[idx]][household_id[idx]][resultIndex] = idx;
-            dead_id[village_id[idx] * 2 + bari_id[idx] * 10 + household_id[idx] * 10 + resultIndex] = idx;
+            if( village_id[idx] >= MAX_VILLAGES )
+            {   
+                printf("Too many villages for defined array size. Increase maximal number of villages.\\n");  //Looks like this a feature of PyCharm, and we need two forward slashes to compile
+                return;
+            }
+            if( bari_id[idx] >= MAX_BARIS_PER_VILLAGE )
+            {   
+                printf("Too many baris for defined array size. Increase maximal number of baris per village.\\n");  //Looks like this a feature of PyCharm, and we need two forward slashes to compile
+                return;
+            }
+            if( household_id[idx] >= MAX_INIVIDUALS_PER_HH )
+            {   
+                printf("Too many households for defined array size. Increase maximal number of households per bari.\\n");  //Looks like this a feature of PyCharm, and we need two forward slashes to compile
+                return;
+            }
+            dead_id[village_id[idx] * MAX_VILLAGES + bari_id[idx] * MAX_BARIS_PER_VILLAGE + household_id[idx] * MAX_INIVIDUALS_PER_HH + resultIndex] = idx;
         }
     }
 }"""
