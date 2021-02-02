@@ -32,14 +32,14 @@ last_id = 31
 if __name__ == '__main__':
     pycuda.driver.init()
 
-    update_all_individuals = mod.get_function("update")
+    print_index = mod.get_function("update")
 
     print("threadIdx.x | threadIdx.y | blockIdx.x | blockIdx.y | blockDim.x | blockDim.y ")
 
-    update_all_individuals(numpy.uint32(last_id),
-                           block=(3, 2, 1),       # max 36 lines
-                           grid=(3, 2, 1),
-                           time_kernel=True
-                           )
+    print_index(numpy.uint32(last_id),
+                block=(3, 2, 1),  # max 36 lines
+                grid=(3, 2, 1),
+                time_kernel=True
+                )
 
 
