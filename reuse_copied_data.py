@@ -33,9 +33,9 @@ cuda.memcpy_htod(a_on_gpu, a)                                          # copy to
 
 func = mod.get_function("process_array")
 
-time_kernel = func(a_on_gpu, a_on_gpu, block=(1024, 1, 1), grid=(10, 1), time_kernel=True)  # use input array as output
-time_kernel = func(a_on_gpu, a_on_gpu, block=(1024, 1, 1), grid=(10, 1), time_kernel=True)
-time_kernel = func(a_on_gpu, result_on_gpu, block=(1024, 1, 1), grid=(10, 1), time_kernel=True)
+time_kernel = func(a_on_gpu, a_on_gpu, block=(1024, 1, 1), grid=(1, 1, 1), time_kernel=True)  # use input array as output
+time_kernel = func(a_on_gpu, a_on_gpu, block=(1024, 1, 1), grid=(1, 1, 1), time_kernel=True)
+time_kernel = func(a_on_gpu, result_on_gpu, block=(1024, 1, 1), grid=(1, 1, 1), time_kernel=True)
 
 cuda.memcpy_dtoh(result, result_on_gpu) # copy to device(cpu) from host(gpu)
 
