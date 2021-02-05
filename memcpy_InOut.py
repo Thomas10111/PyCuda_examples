@@ -26,7 +26,7 @@ a = numpy.array([range(0, dim)], dtype=numpy.int32)      # array size: 10, 32bit
 result = numpy.empty(dim, dtype=int)
 
 func = mod.get_function("process_array")
-func(cuda.In(a), cuda.Out(result), block=(1024, 1, 1), grid=(1, 1, 1))  # also cuda.InOut()
+func(cuda.In(a), cuda.Out(result), block=(dim, 1, 1), grid=(1, 1, 1))  # also cuda.InOut()
 
 print("result: ", result)
 
