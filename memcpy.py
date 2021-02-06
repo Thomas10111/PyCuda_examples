@@ -29,6 +29,7 @@ result_on_gpu = cuda.mem_alloc(result.size * result.dtype.itemsize)    # allocat
 cuda.memcpy_htod(a_on_gpu, a)                                          # copy to device(gpu) from host(cpu)
 
 func = mod.get_function("process_array")
+func(a_on_gpu, a_on_gpu, block=(dim, 1, 1), grid=(1, 1, 1), time_kernel=True)
 func(a_on_gpu, result_on_gpu, block=(dim, 1, 1), grid=(1, 1, 1), time_kernel=True)
 cuda.memcpy_dtoh(result, result_on_gpu) # copy to device(cpu) from host(gpu)
 
