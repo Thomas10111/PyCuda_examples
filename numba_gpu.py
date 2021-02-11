@@ -14,7 +14,7 @@ import pycuda.compiler as compiler
 from pycuda.compiler import SourceModule
 
 NumberOfIndividuals = 1000
-MAX_INDIVIDUALS = (1 << 12)
+MAX_INDIVIDUALS = (1 << 15)
 BLOCK_SIZE = 1024
 
 mod = SourceModule("""
@@ -62,6 +62,11 @@ class Individual:
     _age = pycuda.driver.managed_zeros(shape=MAX_INDIVIDUALS, dtype=numpy.float32, mem_flags=cuda.mem_attach_flags.GLOBAL)
     _death_age = pycuda.driver.managed_zeros(shape=MAX_INDIVIDUALS, dtype=numpy.float32, mem_flags=cuda.mem_attach_flags.GLOBAL)
     _no_of_children = pycuda.driver.managed_zeros(shape=MAX_INDIVIDUALS, dtype=numpy.uint32, mem_flags=cuda.mem_attach_flags.GLOBAL)
+
+    # _alive = numpy.zeros(shape=MAX_INDIVIDUALS, dtype=numpy.uint32)
+    # _age = numpy.zeros(shape=MAX_INDIVIDUALS, dtype=numpy.float32)
+    # _death_age = numpy.zeros(shape=MAX_INDIVIDUALS, dtype=numpy.float32)
+    # _no_of_children = numpy.zeros(shape=MAX_INDIVIDUALS, dtype=numpy.uint32)
 
     def __init__(self):
         self._id = Individual.get_next_id()
@@ -127,21 +132,35 @@ class Individual:
                )
         pycuda.driver.Context.synchronize()
 
+    @classmethod
+    def update_all_individuals_numba(cls, dt):
+        numba_fn(numpy.uint32(cls._next_id),  # unsigned int count
+               numpy.float32(dt),  # float dt
+               cls._age,  # float* age
+               cls._alive,  # unsigned int* alive
+               cls._no_of_children,
+               cls._death_age,  # float* death_age
+               )
+
 
 #@vectorize([float32(float32, float32, float32, uint32)])
-@guvectorize([(float32, float32[:], float32[:], uint32[:])], '(),(n),(n)->(n)', nopython=True)
-def f(dt, age, death_age, alive):
+@guvectorize([(uint32, float32, float32[:], uint32[:], uint32[:], float32[:])], '(),(),(n),(n),(n)->(n)', nopython=True)
+def numba_fn(next_id, dt, age, alive, no_of_children, death_age):
 
-    def func(x):
+    def doFunction(x):
         return x+1
 
-    for i in range(age.shape[0]):
-        age[i] += dt
+    #for idx in range(age.shape[0]):
+    for idx in range(next_id):
+        age[idx] += dt
 
-        if age[i] > death_age[i]:
-             alive[i] = 0
+        if age[idx] > death_age[idx]:
+             alive[idx] = 0
 
-        age[i] = func(987)
+        elif age[idx] > 15 and age[idx] < 50:
+            doFunction(no_of_children[idx])
+
+        age[idx] = doFunction(987)
 
 
 if __name__ == '__main__':
@@ -158,6 +177,7 @@ if __name__ == '__main__':
     for _ in range(duration):
         Individual.update_all_individuals(dt)
     print("duration: ", timeit.default_timer() - start_time)
+
     #
     # # Python
     # start_time = timeit.default_timer()
@@ -172,8 +192,12 @@ if __name__ == '__main__':
     #
     # print("duration python: ", timeit.default_timer() - start_time)
 
+    Individual.update_all_individuals_numba(dt)
+
     start_time = timeit.default_timer()
-    f(dt, Individual._age, Individual._death_age, Individual._alive)
+    for _ in range(duration):
+        Individual.update_all_individuals_numba(dt)
+
     print("duration numba: ", timeit.default_timer() - start_time)
     print(Individual._alive)
     print(Individual._age)
