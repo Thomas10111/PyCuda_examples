@@ -1,18 +1,7 @@
-import timeit
-import random
 import numpy
-from numba import float32, vectorize, uint32, void, guvectorize, cuda
-
-# PyCUDA
-#import pycuda.driver as cuda
-import pycuda.autoinit
-import pycuda.compiler as compiler
-from pycuda.compiler import SourceModule
 import cupy as cp
 import timeit
 from scipy import sparse
-
-
 
 
 # x = pycuda.driver.managed_zeros(shape=4, dtype=numpy.int32, mem_flags=cuda.mem_attach_flags.GLOBAL)
