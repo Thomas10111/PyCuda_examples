@@ -47,12 +47,14 @@ for size in sizes:
 
 
     # # numpy int
+    # BLAS, which is used in numpy, only works with float32 and float64 See https://www.benjaminjohnston.com.au/matmul
     a_np = numpy.random.randint(0, 10, (size, size))
     b_np = numpy.random.randint(0, 10, (size, size))
     result_time = timeit.timeit("c_np = numpy.dot(a_np, b_np)", globals=globals(), number=1)
     print("duration numpy int: ", result_time / 1.0)
 
     # # numpy int32
+    # BLAS, which is used in numpy, only works with float32 and float64 See https://www.benjaminjohnston.com.au/matmul
     a_np = numpy.random.randint(0, 10, (size, size), dtype=numpy.int32)
     b_np = numpy.random.randint(0, 10, (size, size), dtype=numpy.int32)
     result_time = timeit.timeit("c_np = numpy.dot(a_np, b_np)", globals=globals(), number=1)
@@ -87,6 +89,6 @@ for size in sizes:
 # duration gpu:  0.006359999999999921
 # avg duration gpu:  0.00414393999999998
 # duration numpy:  0.07829159999999993
-# duration numpy int:  27.2362269
+# duration numpy int:  27.2362269               # BLAS, which is used in numpy, only works with float32 and float64 See https://www.benjaminjohnston.com.au/matmul
 # duration numpy int32:  27.470195999999994
 # avg duration sparse:  2.313961
